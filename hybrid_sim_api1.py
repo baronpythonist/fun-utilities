@@ -10,6 +10,7 @@ Created on Sat Nov 25 09:01:53 2017
 # hybrid_sim_api1.py
 
 import numpy as np
+from contextlib import contextmanager
 #from Queue import Queue
 #import xlrd
 #import pyqtgraph as pg
@@ -24,31 +25,103 @@ def allNotInvalid(data):
     else:
         return False
     
+def combineSignals(signal1, signal2):
+    dSpecs1 = signal1.dimSpecs
+    nd1 = signal1.ndim
+    dShape1 = signal1.shape
+    if isinstance(signal2, Signal):
+        dSpecs2 = signal2.dimSpecs
+        nd2 = signal2.ndim
+        dShape2 = signal2.shape
+    else:
+        dSpecs2 = []
+        nd2 = 0
+        dShape2 = ()
+    if nd1 == 0 and nd2 == 0:
+        nd3 = 0
+        dSpecs3b = []
+        dShape3 = ()
+    elif nd2 == 0:
+        nd3 = nd1
+        dSpecs3b = dSpecs1
+        dShape3 = dShape1
+    elif nd1 == 0:
+        nd3 = nd2
+        dSpecs3b = dSpecs2
+        dShape3 = dShape2
+    else:
+        dSpecs3a = set(dSpecs1)
+        dSpecs3a.union(dSpecs2)
+        dSpecs3b = list(dSpecs3a)
+        dSpecs3b.sort()
+        nd3 = len(dSpecs3b)
+        
+    dims = list(range(nd3))
+    reps1 = []
+    reps2 = []
+    for k1, k2 in zip(dims, dSpecs3b):
+        if k2 in dSpecs1:
+            reps1.append(...)
+        else:
+            reps1.append(None)
+        if k2 in dSpecs2:
+            reps2.append(...)
+        else:
+            reps2.append(None)
+    inds1 = SigIndices(nd3, dims, reps1)
+    inds2 = SigIndices(nd3, dims, reps2)
+    
+
+    
+class SigIndices(tuple):
+    """ Modified indexing tuple """
+    def __init__(self, nd, *args):
+        if len(args) > 1:
+            dims, reps = args[:2]
+        else:
+            dims, reps = [], []
+        iList = []
+        for k in range(nd):
+            if k in dims:
+                k2 = dims.index(k)
+                iList.append(reps[k2])
+            else:
+                iList.append(...)
+        if len(iList) == 0:
+            iList = None
+        else:
+            pass
+        super(self).__init__(iList)
+        
+    def __str__(self):
+        str1 = ','.join(str(self))
+        str2 = str1.replace('Ellipsis', ':')
+        return 'indices = {}'.format(str2)
+    
 class ImmutableError(Exception):
     """ This error is raised when an attempt is made to modify a constant signal """
     def __init__(self, *args, **kwds):
         super(self).__init__(*args, **kwds)
         # that's all
 
-class Signal():
+class Signal(np.ndarray):
     """ A N-dimensional NumPy array of data, with a fixed shape and dtype """
-    def __init__(self, dShape, dtype1, const=False):
-        self.dShape = dShape
-        self.dtype1 = dtype1
-        self.data = np.empty(dShape, dtype=dtype1)
+    def __init__(self, dShape, dimSpecs, dtype1, const=False):
+        super(self).__init__(dShape, dtype=dtype1)
         self.initialized = False
+        self.dimSpecs = dimSpecs
         self.isConstant = const
         self.connected_blocks = []
         
     def initData(self, data2):
         # data2 must have the same shape and a compatible dtype as self.data
         try:
-            nd1 = self.data.ndim
+            nd1 = self.ndim
             nd2 = data2.ndim
             if nd1 == nd2:
-                if data2.shape == self.dShape:
-                    inds = tuple([... for d in range(nd1)])
-                    self.data[inds] = data2
+                if data2.shape == self.shape:
+                    inds = SigIndices(nd1)
+                    self[inds] = data2
                     self.initialized = True
                 else:
                     pass
@@ -66,7 +139,7 @@ class Signal():
         if self.initialized:
             nd1 = self.data.ndim
             if data2.shape == self.dShape:
-                inds = tuple([... for d in range(nd1)])
+                inds = SigIndices(nd1)
                 self.data[inds] = data2
                 updated = True
             else:
@@ -74,12 +147,21 @@ class Signal():
         else:
             pass
         return updated
+    
+    def __and__(self, signal2):
         
-    def getData(self):
-        if self.initialized and allNotInvalid(self.data):
-            return self.data
-        else:
-            raise ValueError
+        
+        
+#    def getData(self):
+#        if self.initialized and allNotInvalid(self.data):
+#            return self.data
+#        else:
+#            raise ValueError
+
+class LogicalArray(contextmanager):
+    """ Allows for if statements that operate on arrays """
+    def __init__(self, logicExpr):
+        pass
 
 
 class Data_Monitor():
