@@ -10,7 +10,7 @@ Created on Sat Nov 25 09:01:53 2017
 # hybrid_sim_api1.py
 
 import numpy as np
-from contextlib import contextmanager
+from contextlib import ContextDecorator
 #from Queue import Queue
 #import xlrd
 #import pyqtgraph as pg
@@ -25,40 +25,64 @@ def allNotInvalid(data):
     else:
         return False
     
-def combineSignals(signal1, signal2):
-    dSpecs1 = signal1.dimSpecs
-    nd1 = signal1.ndim
-    dShape1 = signal1.shape
-    if isinstance(signal2, Signal):
-        dSpecs2 = signal2.dimSpecs
-        nd2 = signal2.ndim
-        dShape2 = signal2.shape
-    else:
-        dSpecs2 = []
-        nd2 = 0
-        dShape2 = ()
-    if nd1 == 0 and nd2 == 0:
-        nd3 = 0
-        dSpecs3b = []
-        dShape3 = ()
-    elif nd2 == 0:
-        nd3 = nd1
-        dSpecs3b = dSpecs1
-        dShape3 = dShape1
-    elif nd1 == 0:
-        nd3 = nd2
-        dSpecs3b = dSpecs2
-        dShape3 = dShape2
-    else:
-        dSpecs3a = set(dSpecs1)
-        dSpecs3a.union(dSpecs2)
-        dSpecs3b = list(dSpecs3a)
-        dSpecs3b.sort()
-        nd3 = len(dSpecs3b)
-        
-    dims = list(range(nd3))
+def combineSignals(signal1, *remSignals):
+    allSpecs = []
+    allDims = []
+    allShapes = []
+    allTypes = []
+    allSpecs.append(signal1.dimSpecs)
+    allDims.append(signal1.ndim)
+    allShapes.append(signal1.shape)
+    allTypes.append(signal1.dtype)
+    d1 = dict(zip(dSpecs1, dShape1))
+    for signal2 in remSignals:
+        if isinstance(signal2, Signal):
+            dSpecs2 = signal2.dimSpecs
+            nd2 = signal2.ndim
+            dShape2 = signal2.shape
+            d1.update(dSpecs2, dShape2)
+            dtype2 = signal2.dtype
+        else:
+            dSpecs2 = []
+            nd2 = 0
+            dShape2 = ()
+            if isinstance(signal2, float):
+                dtype2 = float
+            else:
+                dtype2 = int
+        allSpecs.append(dSpecs2)
+        allDims.append(nd2)
+        allShapes.append(dShape2)
+        allTypes.append(dtype2)
+    lastVals = None
+    for vals in zip(allSpecs, allDims, allTypes):
+        if lastVals is not None:
+            dSpecs1, nd1, dtype1 = lastVals
+        else:
+            lastVals = vals
+            continue
+        dSpecs2, nd2, dtype2 = vals
+        if nd1 == 0 and nd2 == 0:
+            nd3 = 0
+            dSpecs3b = []
+        elif nd2 == 0:
+            nd3 = nd1
+            dSpecs3b = dSpecs1
+        elif nd1 == 0:
+            nd3 = nd2
+            dSpecs3b = dSpecs2
+        else:
+            dSpecs3a = set(dSpecs1)
+            dSpecs3a.union(dSpecs2)
+            dSpecs3b = list(dSpecs3a)
+            dSpecs3b.sort()
+            nd3 = len(dSpecs3b)
+        dims = list(range(nd3))
+        lastVals = (dSpecs3b, nd3, dtype2)
+    
     reps1 = []
     reps2 = []
+    dShape3a = []
     for k1, k2 in zip(dims, dSpecs3b):
         if k2 in dSpecs1:
             reps1.append(...)
@@ -68,9 +92,15 @@ def combineSignals(signal1, signal2):
             reps2.append(...)
         else:
             reps2.append(None)
+        dShape3a.append(d1[k2])
     inds1 = SigIndices(nd3, dims, reps1)
     inds2 = SigIndices(nd3, dims, reps2)
-    
+    dShape3b = tuple(dShape3a)
+    signal3 = Signal(dShape3b, dSpecs3b, dtype1)
+    signal4 = Signal(dShape3b, dSpecs3b, dtype2)
+    signal3.initData(signal1, inds1)
+    signal4.initData(signal2, inds2)
+    return signal3, signal4
 
     
 class SigIndices(tuple):
@@ -113,14 +143,14 @@ class Signal(np.ndarray):
         self.isConstant = const
         self.connected_blocks = []
         
-    def initData(self, data2):
+    def initData(self, data2, inds):
         # data2 must have the same shape and a compatible dtype as self.data
         try:
             nd1 = self.ndim
             nd2 = data2.ndim
             if nd1 == nd2:
                 if data2.shape == self.shape:
-                    inds = SigIndices(nd1)
+#                    inds = SigIndices(nd1)
                     self[inds] = data2
                     self.initialized = True
                 else:
@@ -134,34 +164,95 @@ class Signal(np.ndarray):
         else:
             pass
         
-    def updateData(self, data2):
+    def updateData(self, data2, inds):
         updated = False
         if self.initialized:
-            nd1 = self.data.ndim
-            if data2.shape == self.dShape:
-                inds = SigIndices(nd1)
-                self.data[inds] = data2
-                updated = True
-            else:
-                pass
+#            nd1 = self.ndim
+            if not self.isConstant:
+                if data2.shape == self.dShape:
+    #                inds = SigIndices(nd1)
+                    self[inds] = data2
+                    updated = True
+                else:
+                    pass
+            raise ImmutableError
         else:
             pass
         return updated
     
     def __and__(self, signal2):
-        
-        
-        
-#    def getData(self):
-#        if self.initialized and allNotInvalid(self.data):
-#            return self.data
-#        else:
-#            raise ValueError
+        signal3, signal4 = combineSignals(self, signal2)
+        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.logical_and(signal3, signal4), SigIndices(signal3.ndim))
+        return outSignal
+    
+    def __or__(self, signal2):
+        signal3, signal4 = combineSignals(self, signal2)
+        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.logical_or(signal3, signal4), SigIndices(signal3.ndim))
+        return outSignal
+    
+    def __invert__(self):
+        outSignal = Signal(self.shape, self.dimSpecs, bool)
+        outSignal.initData(np.logical_not(self), SigIndices(self.ndim))
+        return outSignal
+    
+    def __eq__(self, signal2):
+        signal3, signal4 = combineSignals(self, signal2)
+        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.equal(signal3, signal4), SigIndices(signal3.ndim))
+        return outSignal
+    
+    def __ne__(self, signal2):
+        signal3, signal4 = combineSignals(self, signal2)
+        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.not_equal(signal3, signal4), SigIndices(signal3.ndim))
+        return outSignal
+    
+    def __lt__(self, signal2):
+        signal3, signal4 = combineSignals(self, signal2)
+        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.less(signal3, signal4), SigIndices(signal3.ndim))
+        return outSignal
+    
+    def __le__(self, signal2):
+        signal3, signal4 = combineSignals(self, signal2)
+        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.less_equal(signal3, signal4), SigIndices(signal3.ndim))
+        return outSignal
+    
+    def __gt__(self, signal2):
+        signal3, signal4 = combineSignals(self, signal2)
+        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.greater(signal3, signal4), SigIndices(signal3.ndim))
+        return outSignal
+    
+    def __ge__(self, signal2):
+        signal3, signal4 = combineSignals(self, signal2)
+        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.greater_equal(signal3, signal4), SigIndices(signal3.ndim))
+        return outSignal
 
-class LogicalArray(contextmanager):
+class LogicalArray():
     """ Allows for if statements that operate on arrays """
-    def __init__(self, logicExpr):
-        pass
+    def __init__(self, logicExpr, inputs1):
+        self.logicalOut = logicExpr
+        self.inputs1 = inputs1
+        
+        
+ 
+class LogicBlock(LogicalArray, ContextDecorator):
+    """ Decorator for logic blocks """
+    def __init__(self, logicExpr, inputs1, *args, **kwds):
+        LogicalArray.__init__(self, logicExpr, inputs1)
+        ContextDecorator.__init__(self, *args, **kwds)
+    
+    def __enter__(self):
+        
+        
+    
+        
+
 
 
 class Data_Monitor():
@@ -182,13 +273,10 @@ class Data_Monitor():
             updated = False
             if name in self.data:
                 signal1 = self.data[name]
-                if not signal1.isConstant:
-                    try:
-                        updated = signal1.updateData(data2)
-                    except (TypeError, ValueError):
-                        pass
-                else:
-                    raise ImmutableError
+                try:
+                    updated = signal1.updateData(data2)
+                except (TypeError, ValueError):
+                    pass
             else:
                 pass
             if updated:
