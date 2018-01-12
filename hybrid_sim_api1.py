@@ -10,7 +10,7 @@ Created on Sat Nov 25 09:01:53 2017
 # hybrid_sim_api1.py
 
 import numpy as np
-from contextlib import ContextDecorator
+#from contextlib import ContextDecorator
 #from Queue import Queue
 #import xlrd
 #import pyqtgraph as pg
@@ -34,7 +34,8 @@ def combineSignals(signal1, *remSignals):
     allDims.append(signal1.ndim)
     allShapes.append(signal1.shape)
     allTypes.append(signal1.dtype)
-    d1 = dict(zip(dSpecs1, dShape1))
+    d1 = dict(zip(signal1.dimSpecs, signal1.shape))
+    allSignals = [signal1, *remSignals]
     for signal2 in remSignals:
         if isinstance(signal2, Signal):
             dSpecs2 = signal2.dimSpecs
@@ -42,7 +43,7 @@ def combineSignals(signal1, *remSignals):
             dShape2 = signal2.shape
             d1.update(dSpecs2, dShape2)
             dtype2 = signal2.dtype
-        else:
+        elif signal2.ndim == 0:
             dSpecs2 = []
             nd2 = 0
             dShape2 = ()
@@ -50,6 +51,8 @@ def combineSignals(signal1, *remSignals):
                 dtype2 = float
             else:
                 dtype2 = int
+        else:
+            raise TypeError
         allSpecs.append(dSpecs2)
         allDims.append(nd2)
         allShapes.append(dShape2)
@@ -77,30 +80,28 @@ def combineSignals(signal1, *remSignals):
             dSpecs3b = list(dSpecs3a)
             dSpecs3b.sort()
             nd3 = len(dSpecs3b)
-        dims = list(range(nd3))
         lastVals = (dSpecs3b, nd3, dtype2)
-    
-    reps1 = []
-    reps2 = []
+    (dSpecs3b, nd3, dtype2) = lastVals
+    dims = list(range(nd3))
+    allReps = [[] for s in allSpecs]
     dShape3a = []
     for k1, k2 in zip(dims, dSpecs3b):
-        if k2 in dSpecs1:
-            reps1.append(...)
-        else:
-            reps1.append(None)
-        if k2 in dSpecs2:
-            reps2.append(...)
-        else:
-            reps2.append(None)
+        for k3, dSpecs1 in enumerate(allSpecs):
+            reps1 = allReps[k3]
+            if k2 in dSpecs1:
+                reps1.append(...)
+            else:
+                reps1.append(None)
+            allReps[k3] = reps1
         dShape3a.append(d1[k2])
-    inds1 = SigIndices(nd3, dims, reps1)
-    inds2 = SigIndices(nd3, dims, reps2)
     dShape3b = tuple(dShape3a)
-    signal3 = Signal(dShape3b, dSpecs3b, dtype1)
-    signal4 = Signal(dShape3b, dSpecs3b, dtype2)
-    signal3.initData(signal1, inds1)
-    signal4.initData(signal2, inds2)
-    return signal3, signal4
+    outSignals = []
+    for reps1, dtype1, signal1 in zip(allReps, allTypes, allSignals):
+        inds1 = SigIndices(nd3, dims, reps1)
+        signalOut = Signal(dShape3b, dSpecs3b, dtype1)
+        signalOut.initData(signal1, inds1)
+        outSignals.append(signalOut)
+    return tuple(outSignals)
 
     
 class SigIndices(tuple):
@@ -235,25 +236,41 @@ class Signal(np.ndarray):
 
 class LogicalArray():
     """ Allows for if statements that operate on arrays """
-    def __init__(self, logicExpr, inputs1):
+    def __init__(self, logicExpr, allSignals):
         self.logicalOut = logicExpr
-        self.inputs1 = inputs1
+        self.allSignals = allSignals
         
         
  
-class LogicBlock(LogicalArray, ContextDecorator):
-    """ Decorator for logic blocks """
-    def __init__(self, logicExpr, inputs1, *args, **kwds):
-        LogicalArray.__init__(self, logicExpr, inputs1)
-        ContextDecorator.__init__(self, *args, **kwds)
+class LogicBlock(LogicalArray):
+    """ Context manager for logic blocks """
+    def __init__(self, logicExpr, allSignals):
+        super(self).__init__(logicExpr, allSignals)
     
     def __enter__(self):
-        
-        
+        return self
     
+    def __exit__(self):
+        return False
         
 
+def ifcond(condition, allSignals):
+    condition2, *allSignals2 = combineSignals(condition, *allSignals)
+    return LogicBlock(condition2, allSignals2)
 
+def elifcond(ifobj, condition, allSignals):
+    condition2, *allSignals2 = combineSignals(condition, *allSignals)
+    condition3 = condition2 and not ifobj.logicalOut
+    return LogicBlock(condition3, allSignals2)
+
+def elseclause(ifobj, allSignals):
+    condition, *allSignals2 = combineSignals(ifobj.logicalOut, *allSignals)
+    return LogicBlock(not condition, allSignals2)
+
+def nestedifcond(parentobj, condition, allSignals):
+    condition2, *allSignals2 = combineSignals(condition, *allSignals)
+    condition3 = condition2 and parentobj.logicalOut
+    return LogicBlock(condition3, allSignals2)
 
 class Data_Monitor():
     """ Creates an object containing a set of relevant signals with unique names """
@@ -337,18 +354,8 @@ class Sim_Block():
                             (output_name, outObject) = outputs1[outN]
                         else:
                             break
-#                            output_name = 'output_{0:0>2d}'.format(outN)
-#                            outObject = None
-#                            outputs1[outN] = (output_name, outObject)
-#                            self.ioPorts['out'] = outputs1
                     else:
                         break
-#                        outputs1 = {}
-#                        for n in self.nOutputs:
-#                            output_name = 'output_{0:0>2d}'.format(n)
-#                            outObject = None
-#                            outputs1[n] = (output_name, outObject)
-#                        self.ioPorts['out'] = outputs1
                     if 'in' in block2.ioPorts:
                         inputs1 = block2.ioPorts['in']
                     else:
@@ -366,9 +373,4 @@ class Sim_Block():
         else:
             pass
         return success
-    
-    
-                        
-                    
-                    
 
