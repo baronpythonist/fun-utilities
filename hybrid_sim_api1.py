@@ -41,7 +41,7 @@ def combineSignals(signal1, *remSignals):
             dSpecs2 = signal2.dimSpecs
             nd2 = signal2.ndim
             dShape2 = signal2.shape
-            d1.update(dSpecs2, dShape2)
+            d1.update(dict(zip(dSpecs2, dShape2)))
             dtype2 = signal2.dtype
         elif signal2.ndim == 0:
             dSpecs2 = []
@@ -89,7 +89,7 @@ def combineSignals(signal1, *remSignals):
         for k3, dSpecs1 in enumerate(allSpecs):
             reps1 = allReps[k3]
             if k2 in dSpecs1:
-                reps1.append(...)
+                reps1.append(True)
             else:
                 reps1.append(None)
             allReps[k3] = reps1
@@ -97,66 +97,80 @@ def combineSignals(signal1, *remSignals):
     dShape3b = tuple(dShape3a)
     outSignals = []
     for reps1, dtype1, signal1 in zip(allReps, allTypes, allSignals):
-        inds1 = SigIndices(nd3, dims, reps1)
-        signalOut = Signal(dShape3b, dSpecs3b, dtype1)
+        inds1 = createInds(nd3, dims, reps1)
+        signalOut = createSignal(dShape3b, dSpecs3b, dtype1)
         signalOut.initData(signal1, inds1)
         outSignals.append(signalOut)
     return tuple(outSignals)
 
+def createInds(nd, *args):
+    if len(args) > 1:
+        dims, reps = args[:3]
+    else:
+        return True
+    iList = []
+    for k in range(nd):
+        if k in dims:
+            k2 = dims.index(k)
+            iList.append(reps[k2])
+        else:
+            iList.append(True)
+    if len(iList) > 0:
+        return SigIndices(iList)
+    else:
+        return None
     
 class SigIndices(tuple):
     """ Modified indexing tuple """
-    def __init__(self, nd, *args):
-        if len(args) > 1:
-            dims, reps = args[:2]
-        else:
-            dims, reps = [], []
-        iList = []
-        for k in range(nd):
-            if k in dims:
-                k2 = dims.index(k)
-                iList.append(reps[k2])
-            else:
-                iList.append(...)
-        if len(iList) == 0:
-            iList = None
-        else:
-            pass
-        super(self).__init__(iList)
-        
     def __str__(self):
-        str1 = ','.join(str(self))
-        str2 = str1.replace('Ellipsis', ':')
+        str1 = ','.join(map(str, self))
+        str2 = str1.replace('True', ':')
         return 'indices = {}'.format(str2)
+    
+    def __repr__(self):
+        str1 = ','.join(map(str, self))
+        str2 = str1.replace('True', ':')
+        return 'indices = {}'.format(str2)
+    
     
 class ImmutableError(Exception):
     """ This error is raised when an attempt is made to modify a constant signal """
     def __init__(self, *args, **kwds):
-        super(self).__init__(*args, **kwds)
+        super().__init__(*args, **kwds)
         # that's all
+
+
+def createSignal(dShape1, dimSpecs1, dtype1, const=False):
+    signal1 = Signal(dShape1, dtype=dtype1)
+    signal1.setupSignal(dimSpecs1, const=const)
+    return signal1
 
 class Signal(np.ndarray):
     """ A N-dimensional NumPy array of data, with a fixed shape and dtype """
-    def __init__(self, dShape, dimSpecs, dtype1, const=False):
-        super(self).__init__(dShape, dtype=dtype1)
+    def __init__(self, *args, **kwds):
+        super().__init__()
         self.initialized = False
+        self.connected_blocks = []
+    
+    def setupSignal(self, dimSpecs, const=False):
         self.dimSpecs = dimSpecs
         self.isConstant = const
-        self.connected_blocks = []
         
     def initData(self, data2, inds):
         # data2 must have the same shape and a compatible dtype as self.data
-        try:
-            nd1 = self.ndim
-            nd2 = data2.ndim
-            if nd1 == nd2:
-                if data2.shape == self.shape:
-#                    inds = SigIndices(nd1)
-                    self[inds] = data2
-                    self.initialized = True
-                else:
-                    pass
-        except (TypeError, ValueError):
+        if self.initialized == False:
+            try:
+                nd1 = self.ndim
+                nd2 = data2.ndim
+                if nd1 == nd2:
+                    if data2.shape == self.shape:
+                        self[inds] = data2
+                        self.initialized = True
+                    else:
+                        pass
+            except (TypeError, ValueError):
+                pass
+        else:
             pass
         
     def addAsBlockInput(self, block1):
@@ -170,68 +184,65 @@ class Signal(np.ndarray):
         if self.initialized:
 #            nd1 = self.ndim
             if not self.isConstant:
-                if data2.shape == self.dShape:
-    #                inds = SigIndices(nd1)
-                    self[inds] = data2
-                    updated = True
-                else:
-                    pass
-            raise ImmutableError
+                self[inds] = data2
+                updated = True
+            else:
+                raise ImmutableError
         else:
             pass
         return updated
     
     def __and__(self, signal2):
         signal3, signal4 = combineSignals(self, signal2)
-        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
-        outSignal.initData(np.logical_and(signal3, signal4), SigIndices(signal3.ndim))
+        outSignal = createSignal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.logical_and(signal3, signal4), createInds(signal3.ndim))
         return outSignal
     
     def __or__(self, signal2):
         signal3, signal4 = combineSignals(self, signal2)
-        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
-        outSignal.initData(np.logical_or(signal3, signal4), SigIndices(signal3.ndim))
+        outSignal = createSignal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.logical_or(signal3, signal4), createInds(signal3.ndim))
         return outSignal
     
     def __invert__(self):
-        outSignal = Signal(self.shape, self.dimSpecs, bool)
-        outSignal.initData(np.logical_not(self), SigIndices(self.ndim))
+        outSignal = createSignal(self.shape, self.dimSpecs, bool)
+        outSignal.initData(np.logical_not(self), createInds(self.ndim))
         return outSignal
     
     def __eq__(self, signal2):
         signal3, signal4 = combineSignals(self, signal2)
-        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
-        outSignal.initData(np.equal(signal3, signal4), SigIndices(signal3.ndim))
+        outSignal = createSignal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.equal(signal3, signal4), createInds(signal3.ndim))
         return outSignal
     
     def __ne__(self, signal2):
         signal3, signal4 = combineSignals(self, signal2)
-        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
-        outSignal.initData(np.not_equal(signal3, signal4), SigIndices(signal3.ndim))
+        outSignal = createSignal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.not_equal(signal3, signal4), createInds(signal3.ndim))
         return outSignal
     
     def __lt__(self, signal2):
         signal3, signal4 = combineSignals(self, signal2)
-        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
-        outSignal.initData(np.less(signal3, signal4), SigIndices(signal3.ndim))
+        outSignal = createSignal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.less(signal3, signal4), createInds(signal3.ndim))
         return outSignal
     
     def __le__(self, signal2):
         signal3, signal4 = combineSignals(self, signal2)
-        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
-        outSignal.initData(np.less_equal(signal3, signal4), SigIndices(signal3.ndim))
+        outSignal = createSignal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.less_equal(signal3, signal4), createInds(signal3.ndim))
         return outSignal
     
     def __gt__(self, signal2):
         signal3, signal4 = combineSignals(self, signal2)
-        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
-        outSignal.initData(np.greater(signal3, signal4), SigIndices(signal3.ndim))
+        outSignal = createSignal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.greater(signal3, signal4), createInds(signal3.ndim))
         return outSignal
     
     def __ge__(self, signal2):
         signal3, signal4 = combineSignals(self, signal2)
-        outSignal = Signal(signal3.shape, signal3.dimSpecs, bool)
-        outSignal.initData(np.greater_equal(signal3, signal4), SigIndices(signal3.ndim))
+        outSignal = createSignal(signal3.shape, signal3.dimSpecs, bool)
+        outSignal.initData(np.greater_equal(signal3, signal4), createInds(signal3.ndim))
         return outSignal
 
 class LogicalArray():
@@ -244,8 +255,8 @@ class LogicalArray():
  
 class LogicBlock(LogicalArray):
     """ Context manager for logic blocks """
-    def __init__(self, logicExpr, allSignals):
-        super(self).__init__(logicExpr, allSignals)
+    def __init__(self, *args, **kwds):
+        super().__init__(*args, **kwds)
     
     def __enter__(self):
         return self
