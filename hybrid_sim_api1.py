@@ -44,7 +44,7 @@ def combineSignals(signal1, *remSignals):
             d1.update(dict(zip(dSpecs2, dShape2)))
             dtype2 = signal2.dtype
         elif signal2.ndim == 0:
-            dSpecs2 = []
+            dSpecs2 = ()
             nd2 = 0
             dShape2 = ()
             if isinstance(signal2, float):
@@ -67,7 +67,7 @@ def combineSignals(signal1, *remSignals):
         dSpecs2, nd2, dtype2 = vals
         if nd1 == 0 and nd2 == 0:
             nd3 = 0
-            dSpecs3b = []
+            dSpecs3b = ()
         elif nd2 == 0:
             nd3 = nd1
             dSpecs3b = dSpecs1
@@ -86,7 +86,7 @@ def combineSignals(signal1, *remSignals):
     allReps = [[] for s in allSpecs]
     dShape3a = []
     for k1, k2 in zip(dims, dSpecs3b):
-        for k3, dSpecs1 in enumerate(allSpecs):
+        for k3, (dSpecs1, signal1) in enumerate(zip(allSpecs, allSignals)):
             reps1 = allReps[k3]
             if k2 in dSpecs1:
                 reps1.append(True)
@@ -98,7 +98,10 @@ def combineSignals(signal1, *remSignals):
     outSignals = []
     for reps1, dtype1, signal1 in zip(allReps, allTypes, allSignals):
         inds1 = createInds(nd3, dims, reps1)
-        signalOut = createSignal(dShape3b, dSpecs3b, dtype1)
+        if signal1.isConstant:
+            signalOut = createSignal(dShape3b, (), dtype1, const=True)
+        else:
+            signalOut = createSignal(dShape3b, dSpecs3b, dtype1)
         signalOut.initData(signal1, inds1)
         outSignals.append(signalOut)
     return tuple(outSignals)
@@ -118,7 +121,7 @@ def createInds(nd, *args):
     if len(iList) > 0:
         return SigIndices(iList)
     else:
-        return None
+        return True
     
 class SigIndices(tuple):
     """ Modified indexing tuple """
@@ -145,12 +148,19 @@ def createSignal(dShape1, dimSpecs1, dtype1, const=False):
     signal1.setupSignal(dimSpecs1, const=const)
     return signal1
 
+def createConst(cdata1, dtype1=float, dShape1=()):
+    cdata2 = np.array(cdata1)
+    const1 = Signal(dShape1, dtype=dtype1)
+    const1.setupSignal((), const=True)
+    const1.initData(cdata2, True)
+    return const1
+
 class Signal(np.ndarray):
     """ A N-dimensional NumPy array of data, with a fixed shape and dtype """
     def __init__(self, *args, **kwds):
         super().__init__()
         self.initialized = False
-        self.connected_blocks = []
+        self.finalOutput = False
     
     def setupSignal(self, dimSpecs, const=False):
         self.dimSpecs = dimSpecs
@@ -162,8 +172,11 @@ class Signal(np.ndarray):
             try:
                 nd1 = self.ndim
                 nd2 = data2.ndim
-                if nd1 == nd2:
-                    if data2.shape == self.shape:
+                if self.isConstant:
+                    self[True] = data2
+                    self.initialized = True
+                else:
+                    if nd1 == nd2:
                         self[inds] = data2
                         self.initialized = True
                     else:
@@ -283,16 +296,19 @@ def nestedifcond(parentobj, condition, allSignals):
     condition3 = condition2 and parentobj.logicalOut
     return LogicBlock(condition3, allSignals2)
 
-class Data_Monitor():
+class DataMonitor():
     """ Creates an object containing a set of relevant signals with unique names """
-    def __init__(self, simQueue):
+    def __init__(self, simQueue, outQueue):
         self.simQueue = simQueue
+        self.outQueue = outQueue
         self.data = {}
+        self.sigConnections = {}
         
-    def addSignals(self, names, sigObjects):
-        for name, signal in zip(names, sigObjects):
+    def addSignals(self, names, sigObjects, connectedBlocks):
+        for name, signal, cblocks in zip(names, sigObjects, connectedBlocks):
             if name not in self.data:
-                self.data[name] = sigObjects
+                self.data[name] = signal
+                self.sigConnections[name] = cblocks
             else:
                 pass
             
@@ -308,13 +324,18 @@ class Data_Monitor():
             else:
                 pass
             if updated:
-                for block1 in signal1.connected_blocks:
-                    self.simQueue.put(block1)
+                if name in self.sigConnections:
+                    for block1 in self.sigConnections[name]:
+                        self.simQueue.put(block1)
+                elif signal1.finalOutput:
+                    self.outQueue.put(signal1)
+                else:
+                    pass
             else:
                 pass
 
 
-class Sim_Block():
+class SimBlock():
     """ A single simulation entity encapsulating a function """
     def __init__(self, nInputs, nOutputs, simFunction1, functData, props=None):
         self.nInputs = nInputs
@@ -329,7 +350,7 @@ class Sim_Block():
         self.inputNames = None
         self.outputNames = None
         
-    def init_outputs(self, outputNames, initSignals):
+    def init_outputs(self, outputNames, initSignals, dataMonitor):
         success = False
         if not self.initialized:
             if len(outputNames) == self.nOutputs:
@@ -347,6 +368,7 @@ class Sim_Block():
                     else:
                         outputs1[n] = (name, sigObject)
                 success = True
+                self.initialized = True
             else:
                 pass
         else:
