@@ -10,11 +10,10 @@ Created on Sat Nov 25 09:01:53 2017
 # hybrid_sim_api1.py
 
 import numpy as np
-#from contextlib import ContextDecorator
 #from Queue import Queue
+#from threading import Thread, Event
 #import xlrd
 #import pyqtgraph as pg
-
 
 def allNotInvalid(data):
     if not any(np.isnan(data)):
@@ -161,10 +160,22 @@ class Signal(np.ndarray):
         super().__init__()
         self.initialized = False
         self.finalOutput = False
+        self.dimSpecs = ()
+        self.ignoreDims = ()
+        self.isConstant = False
+        self.isEnableFlag = False
     
-    def setupSignal(self, dimSpecs, const=False):
+    def setupSignal(self, dimSpecs, const=False, ignoreDims=None, isEnableFlag=False):
         self.dimSpecs = dimSpecs
         self.isConstant = const
+        if ignoreDims is not None:
+            self.ignoreDims = ignoreDims
+        else:
+            pass
+        if issubclass(self.dtype, int) and not const:
+            self.isEnableFlag = isEnableFlag
+        else:
+            pass
         
     def initData(self, data2, inds):
         # data2 must have the same shape and a compatible dtype as self.data
@@ -304,18 +315,25 @@ class DataMonitor():
         self.data = {}
         self.sigConnections = {}
         
-    def addSignals(self, names, sigObjects, connectedBlocks):
-        for name, signal, cblocks in zip(names, sigObjects, connectedBlocks):
+    def addSignals(self, names, sigObjects):
+        for name, signal, cblocks in zip(names, sigObjects):
             if name not in self.data:
                 self.data[name] = signal
-                self.sigConnections[name] = cblocks
             else:
                 pass
+            
+    def addConnections(self, sigName, connectedBlocks):
+        if sigName in self.sigConnections:
+            cblocks1 = self.sigConnections[sigName]
+            cblocks1.extend(connectedBlocks)
+            self.sigConnections[sigName] = cblocks1
+        else:
+            self.sigConnections[sigName] = connectedBlocks
             
     def updateSignals(self, names, data_sets):
         for name, data2 in zip(names, data_sets):
             updated = False
-            if name in self.data:
+            if name in self.data and allNotInvalid(data2):
                 signal1 = self.data[name]
                 try:
                     updated = signal1.updateData(data2)
@@ -326,7 +344,7 @@ class DataMonitor():
             if updated:
                 if name in self.sigConnections:
                     for block1 in self.sigConnections[name]:
-                        self.simQueue.put(block1)
+                        self.simQueue.put((block1, self))
                 elif signal1.finalOutput:
                     self.outQueue.put(signal1)
                 else:
@@ -337,20 +355,24 @@ class DataMonitor():
 
 class SimBlock():
     """ A single simulation entity encapsulating a function """
-    def __init__(self, nInputs, nOutputs, simFunction1, functData, props=None):
+    def __init__(self, nInputs, nOutputs, simFunction1, functKwds=None):
         self.nInputs = nInputs
         self.nOutputs = nOutputs
         self.initValues = {}
         self.initialized = False
         self.function1 = simFunction1
-        self.functData = functData
-        self.props = props
+        self.functData = {}
+        if functKwds is not None:
+            self.functKwds = functKwds
+        else:
+            self.functKwds = {}
         self.ioPorts = {}
         self.ioProps = {}
-        self.inputNames = None
-        self.outputNames = None
+        self.inputNames = []
+        self.outputNames = []
+        self.enable = True
         
-    def init_outputs(self, outputNames, initSignals, dataMonitor):
+    def initOutputs(self, outputNames, initSignals, dataMonitor):
         success = False
         if not self.initialized:
             if len(outputNames) == self.nOutputs:
@@ -369,14 +391,18 @@ class SimBlock():
                         outputs1[n] = (name, sigObject)
                 success = True
                 self.initialized = True
+                self.outputNames = outputNames
+                dataMonitor.addSignals(outputNames, initSignals)
             else:
                 pass
         else:
             pass
         return success
-                
+    
+    def addFunctData(self, functData):
+        self.functData.update(functData)
         
-    def connect(self, block2, linkPorts):
+    def connect(self, block2, linkPorts, dataMonitor):
         success = False
         if self.initialized:
             for outN, inN in linkPorts:
@@ -400,10 +426,53 @@ class SimBlock():
                         inObject = outObject
                         inputs1[inN] = (input_name, inObject)
                         block2.ioPorts['in'] = inputs1
-                    success = True
+                        block2.inputNames.append(input_name)
+                        dataMonitor.addConnections(output_name, [block2])
+                        success = True
                 else:
                     pass
         else:
             pass
         return success
+    
+    def runBlock(self, dataMonitor):
+        isRunnable = True
+        if self.initialized:
+            inputSignals = []
+            if len(self.inputNames) > 0:
+                for k1, name in enumerate(self.inputNames):
+                    inputs1 = self.ioPorts['in']
+                    if k1 in inputs1:
+                        if inputs1[k1].initialized:
+                            inputSignals.append(dataMonitor.data[name])
+                        else:
+                            isRunnable = False
+                            break
+                    else:
+                        isRunnable = False
+                        break
+            else:
+                pass
+            if isRunnable:
+                outputs1 = self.function(*inputSignals, **self.functKwds)
+                outputs2 = list(outputs1)
+                dataMonitor.updateSignals(self.outputNames, outputs2)
+            else:
+                pass
+        else:
+            isRunnable = False
+            # block not initialized!
+            raise RuntimeError
+        return isRunnable
+
+
+class SimModel():
+    """ Simulation model class """
+    def __init__(self, name, simQueue, outQueue, domainType='time'):
+        self.simq = simQueue
+        self.outq = outQueue
+        self.name = name
+        self.domain = domainType
+        
+    
 
