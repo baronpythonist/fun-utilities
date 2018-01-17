@@ -121,6 +121,42 @@ def createInds(nd, *args):
         return SigIndices(iList)
     else:
         return True
+
+def createSignal(dShape1, dimSpecs1, dtype1, const=False):
+    signal1 = Signal(dShape1, dtype=dtype1)
+    signal1.setupSignal(dimSpecs1, const=const)
+    return signal1
+
+def createConst(cdata1, dtype1=float, dShape1=()):
+    cdata2 = np.array(cdata1)
+    const1 = Signal(dShape1, dtype=dtype1)
+    const1.setupSignal((), const=True)
+    const1.initData(cdata2, True)
+    return const1
+
+def ifcond(condition, allSignals):
+    condition2, *allSignals2 = combineSignals(condition, *allSignals)
+    return LogicBlock(condition2, allSignals2)
+
+def elifcond(ifobj, condition, allSignals):
+    condition2, *allSignals2 = combineSignals(condition, *allSignals)
+    condition3 = condition2 and not ifobj.logicalOut
+    return LogicBlock(condition3, allSignals2)
+
+def elseclause(ifobj, allSignals):
+    condition, *allSignals2 = combineSignals(ifobj.logicalOut, *allSignals)
+    return LogicBlock(not condition, allSignals2)
+
+def nestedifcond(parentobj, condition, allSignals):
+    condition2, *allSignals2 = combineSignals(condition, *allSignals)
+    condition3 = condition2 and parentobj.logicalOut
+    return LogicBlock(condition3, allSignals2)
+
+def createBlock(name, nInputs, nOutputs, simFunction1, initData, dataMontitor, functKwds=None):
+    block1 = SimBlock(name, nInputs, nOutputs, simFunction1, functKwds=functKwds)
+    (outputNames, outputData) = initData
+    block1.initOutputs(outputNames, outputData, dataMontitor)
+    return block1
     
 class SigIndices(tuple):
     """ Modified indexing tuple """
@@ -141,18 +177,6 @@ class ImmutableError(Exception):
         super().__init__(*args, **kwds)
         # that's all
 
-
-def createSignal(dShape1, dimSpecs1, dtype1, const=False):
-    signal1 = Signal(dShape1, dtype=dtype1)
-    signal1.setupSignal(dimSpecs1, const=const)
-    return signal1
-
-def createConst(cdata1, dtype1=float, dShape1=()):
-    cdata2 = np.array(cdata1)
-    const1 = Signal(dShape1, dtype=dtype1)
-    const1.setupSignal((), const=True)
-    const1.initData(cdata2, True)
-    return const1
 
 class Signal(np.ndarray):
     """ A N-dimensional NumPy array of data, with a fixed shape and dtype """
@@ -268,6 +292,7 @@ class Signal(np.ndarray):
         outSignal = createSignal(signal3.shape, signal3.dimSpecs, bool)
         outSignal.initData(np.greater_equal(signal3, signal4), createInds(signal3.ndim))
         return outSignal
+        
 
 class LogicalArray():
     """ Allows for if statements that operate on arrays """
@@ -275,8 +300,7 @@ class LogicalArray():
         self.logicalOut = logicExpr
         self.allSignals = allSignals
         
-        
- 
+
 class LogicBlock(LogicalArray):
     """ Context manager for logic blocks """
     def __init__(self, *args, **kwds):
@@ -287,29 +311,12 @@ class LogicBlock(LogicalArray):
     
     def __exit__(self):
         return False
-        
 
-def ifcond(condition, allSignals):
-    condition2, *allSignals2 = combineSignals(condition, *allSignals)
-    return LogicBlock(condition2, allSignals2)
-
-def elifcond(ifobj, condition, allSignals):
-    condition2, *allSignals2 = combineSignals(condition, *allSignals)
-    condition3 = condition2 and not ifobj.logicalOut
-    return LogicBlock(condition3, allSignals2)
-
-def elseclause(ifobj, allSignals):
-    condition, *allSignals2 = combineSignals(ifobj.logicalOut, *allSignals)
-    return LogicBlock(not condition, allSignals2)
-
-def nestedifcond(parentobj, condition, allSignals):
-    condition2, *allSignals2 = combineSignals(condition, *allSignals)
-    condition3 = condition2 and parentobj.logicalOut
-    return LogicBlock(condition3, allSignals2)
 
 class DataMonitor():
     """ Creates an object containing a set of relevant signals with unique names """
-    def __init__(self, simQueue, outQueue):
+    def __init__(self, name, simQueue, outQueue):
+        self.name = name
         self.simQueue = simQueue
         self.outQueue = outQueue
         self.data = {}
@@ -355,7 +362,8 @@ class DataMonitor():
 
 class SimBlock():
     """ A single simulation entity encapsulating a function """
-    def __init__(self, nInputs, nOutputs, simFunction1, functKwds=None):
+    def __init__(self, blockName, nInputs, nOutputs, simFunction1, functKwds=None):
+        self.name = blockName
         self.nInputs = nInputs
         self.nOutputs = nOutputs
         self.initValues = {}
@@ -468,11 +476,52 @@ class SimBlock():
 
 class SimModel():
     """ Simulation model class """
-    def __init__(self, name, simQueue, outQueue, domainType='time'):
+    def __init__(self, name, simQueue, outQueue, domainUnits=None):
         self.simq = simQueue
         self.outq = outQueue
         self.name = name
-        self.domain = domainType
+        self.measUnits = domainUnits
+        self.monitors = {}
+        self.allBlocks = {}
+        self.blockNames = []
         
+    def resetModel(self):
+        self.monitors = {}
+        self.allBlocks = {}
+        self.blockNames = []
+    
+    def buildModel(self, blockDeclarations, modelPortlist, monitorNames):
+        'This method is automatically called by one or more module-level functions.'
+        allMonitors = []
+        for name in monitorNames:
+            monitor1 = DataMonitor(name, self.simq, self.outq)
+            allMonitors.append(monitor1)
+        self.monitors = dict(zip(monitorNames, allMonitors))
+        # create and initialize blocks
+        for blockDecl in blockDeclarations:
+            if len(blockDecl) > 6:
+                (blockName, nInputs, nOutputs, simFunction1, initData, monitorName, functKwds) = blockDecl[:5]
+                blockName2 = '.'.join([monitorName, blockName])
+            elif len(blockDecl) == 6:
+                (blockName, nInputs, nOutputs, simFunction1, initData, monitorName) = blockDecl
+                blockName2 = '.'.join([monitorName, blockName])
+                functKwds = {}
+            else:
+                continue
+            if monitorName in self.monitors:
+                dataMonitor1 = self.monitors[monitorName]
+            else:
+                continue
+            block1 = createBlock(blockName2, nInputs, nOutputs, simFunction1, initData, dataMonitor1, functKwds)
+            self.blockNames.append(blockName2)
+            self.allBlocks[blockName2] = (block1, dataMonitor1)
+        # make connections based on netlist
+        for portSpec in modelPortlist:
+            (sourceName, outN, sinkName, inN) = portSpec
+            (sourceBlock, monitor1) = self.allBlocks[sourceName]
+            sinkBlock = self.allBlocks[sinkName][0]
+            sourceBlock.connect(sinkBlock, [(outN, inN)], sourceBlock, monitor1)
+        # done building
+    
     
 
