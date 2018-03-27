@@ -88,7 +88,7 @@ def combineSignals(signal1, *remSignals):
         for k3, (dSpecs1, signal1) in enumerate(zip(allSpecs, allSignals)):
             reps1 = allReps[k3]
             if k2 in dSpecs1:
-                reps1.append(True)
+                reps1.append(whole())
             else:
                 reps1.append(None)
             allReps[k3] = reps1
@@ -109,18 +109,18 @@ def createInds(nd, *args):
     if len(args) > 1:
         dims, reps = args[:3]
     else:
-        return True
+        return whole()
     iList = []
     for k in range(nd):
         if k in dims:
             k2 = dims.index(k)
             iList.append(reps[k2])
         else:
-            iList.append(True)
+            iList.append(whole())
     if len(iList) > 0:
         return SigIndices(iList)
     else:
-        return True
+        return whole()
 
 def createSignal(dShape1, dimSpecs1, dtype1, const=False):
     signal1 = Signal(dShape1, dtype=dtype1)
@@ -157,6 +157,9 @@ def createBlock(name, nInputs, nOutputs, simFunction1, initData, dataMontitor, f
     (outputNames, outputData) = initData
     block1.initOutputs(outputNames, outputData, dataMontitor)
     return block1
+        
+def whole(stop=None):
+    return slice(stop)
     
 class SigIndices(tuple):
     """ Modified indexing tuple """
