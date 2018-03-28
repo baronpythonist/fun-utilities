@@ -152,6 +152,57 @@ def nestedifcond(parentobj, condition, allSignals):
     condition3 = condition2 and parentobj.logicalOut
     return LogicBlock(condition3, allSignals2)
 
+def shiftSignal(signal1, N, padVals=None, dir1='right', axis1='0'):
+    if dir1 == 'right':
+        nd1 = np.ndim(signal1)
+        if nd1 > 0:
+            dShape1 = list(signal1.shape)
+            dShape1[int(axis1)] = N
+            dShape2 = tuple(dShape1)
+            dims1 = list(range(nd1))
+            reps1 = [None for k in dims1]
+            reps1[int(axis1)] = whole()
+            inds1 = createInds(nd1, dims1, reps1)
+            inds2 = createInds(nd1, [int(axis1)], [slice(-N)])
+        else:
+            raise IndexError
+        if padVals is None:
+            padding1 = np.zeros(dShape2, dtype=signal1.dtype)
+            padding2 = padding1
+        else:
+            padding2 = np.zeros(dShape2, dtype=signal1.dtype)
+            padding1 = np.array(padVals, dtype=signal1.dtype)
+            padding2[whole()] = padding1[inds1]
+        data2 = np.r_[axis1, padding2, signal1[inds2]]
+        signal2 = createSignal(signal1.shape, signal1.dimSpecs1, signal1.dtype)
+        signal2.initData(0, whole())
+        signal2.updateData(data2, whole())
+    else:
+        nd1 = np.ndim(signal1)
+        if nd1 > 0:
+            dShape1 = list(signal1.shape)
+            dShape1[int(axis1)] = N
+            dShape2 = tuple(dShape1)
+            dims1 = list(range(nd1))
+            reps1 = [None for k in dims1]
+            reps1[int(axis1)] = whole()
+            inds1 = createInds(nd1, dims1, reps1)
+            inds2 = createInds(nd1, [int(axis1)], [slice(N, None)])
+        else:
+            raise IndexError
+        if padVals is None:
+            padding1 = np.zeros(dShape2, dtype=signal1.dtype)
+            padding2 = padding1
+        else:
+            padding2 = np.zeros(dShape2, dtype=signal1.dtype)
+            padding1 = np.array(padVals, dtype=signal1.dtype)
+            padding2[whole()] = padding1[inds1]
+        data2 = np.r_[axis1, signal1[inds2], padding2]
+        signal2 = createSignal(signal1.shape, signal1.dimSpecs1, signal1.dtype)
+        signal2.initData(0, whole())
+        signal2.updateData(data2, whole())
+    return signal2
+
 def createBlock(name, nInputs, nOutputs, simFunction1, initData, dataMontitor, functKwds=None):
     block1 = SimBlock(name, nInputs, nOutputs, simFunction1, functKwds=functKwds)
     (outputNames, outputData) = initData
