@@ -10,6 +10,7 @@ Created on Sat Nov 25 09:01:53 2017
 # hybrid_sim_api1.py
 
 import numpy as np
+from contextlib import ContextDecorator
 #from Queue import Queue
 #from threading import Thread, Event
 #import xlrd
@@ -36,20 +37,20 @@ def combineSignals(signal1, *remSignals):
     d1 = dict(zip(signal1.dimSpecs, signal1.shape))
     allSignals = [signal1, *remSignals]
     for signal2 in remSignals:
-        if isinstance(signal2, Signal):
+        if type(signal2) is Signal:
             dSpecs2 = signal2.dimSpecs
             nd2 = signal2.ndim
             dShape2 = signal2.shape
             d1.update(dict(zip(dSpecs2, dShape2)))
             dtype2 = signal2.dtype
-        elif signal2.ndim == 0:
+        elif np.ndim(signal2) == 0:
             dSpecs2 = ()
             nd2 = 0
             dShape2 = ()
-            if isinstance(signal2, float):
-                dtype2 = float
+            if type(signal2) in (float, bool, int):
+                dtype2 = type(signal2)
             else:
-                dtype2 = int
+                raise TypeError
         else:
             raise TypeError
         allSpecs.append(dSpecs2)
@@ -59,7 +60,7 @@ def combineSignals(signal1, *remSignals):
     lastVals = None
     for vals in zip(allSpecs, allDims, allTypes):
         if lastVals is not None:
-            dSpecs1, nd1, dtype1 = lastVals
+            (dSpecs1, nd1, dtype1) = lastVals
         else:
             lastVals = vals
             continue
@@ -106,10 +107,12 @@ def combineSignals(signal1, *remSignals):
     return tuple(outSignals)
 
 def createInds(nd, *args):
-    if len(args) > 1:
+    if len(args) > 1 and nd > 0:
         dims, reps = args[:3]
-    else:
+    elif nd > 0:
         return whole()
+    else:
+        return None
     iList = []
     for k in range(nd):
         if k in dims:
@@ -120,12 +123,16 @@ def createInds(nd, *args):
     if len(iList) > 0:
         return SigIndices(iList)
     else:
-        return whole()
+        return None
 
 def createSignal(dShape1, dimSpecs1, dtype1, const=False):
-    signal1 = Signal(dShape1, dtype=dtype1)
-    signal1.setupSignal(dimSpecs1, const=const)
-    return signal1
+    if (not const and len(dShape1) == len(dimSpecs1)) or const:
+        signal1 = Signal(dShape1, dtype=dtype1)
+        signal1.setupSignal(dimSpecs1, const=const)
+        return signal1
+    else:
+        print('Mutable signals must have consistent dimension sizes; all dimensions must be specified.')
+        raise TypeError
 
 def createConst(cdata1, dtype1=float, dShape1=()):
     cdata2 = np.array(cdata1)
@@ -134,23 +141,50 @@ def createConst(cdata1, dtype1=float, dShape1=()):
     const1.initData(cdata2, True)
     return const1
 
+def cond2Integers(condition1):
+    if type(condition1) is Signal:
+        dShape1 = condition1.shape
+        nd = condition1.ndim
+        dims = list(range(nd))
+    else:
+        raise NotImplementedError
+    if nd > 1:
+        condition1b = condition1.flatten()
+        allIndices = np.indices(dShape1)
+        iList = []
+        for k in dims:
+            inds1 = allIndices[k]
+            inds1b = inds1.flatten()
+            inds2 = inds1b[condition1b]
+            iList.append(inds2)
+        condIndices = createInds(nd, dims, iList)
+    elif nd == 1:
+        condIndices = createInds(nd, [0], condition1)
+    else:
+        condIndices = None
+    return condIndices
+
 def ifcond(condition, allSignals):
     condition2, *allSignals2 = combineSignals(condition, *allSignals)
-    return LogicBlock(condition2, allSignals2)
+    condIndices = cond2Integers(condition2)
+    return LogicBlock(condition2, condIndices, allSignals2)
 
 def elifcond(ifobj, condition, allSignals):
     condition2, *allSignals2 = combineSignals(condition, *allSignals)
     condition3 = condition2 and not ifobj.logicalOut
-    return LogicBlock(condition3, allSignals2)
+    condIndices = cond2Integers(condition3)
+    return LogicBlock(condition3, condIndices, allSignals2)
 
 def elseclause(ifobj, allSignals):
     condition, *allSignals2 = combineSignals(ifobj.logicalOut, *allSignals)
-    return LogicBlock(not condition, allSignals2)
+    condIndices = cond2Integers(condition)
+    return LogicBlock(not condition, condIndices, allSignals2)
 
 def nestedifcond(parentobj, condition, allSignals):
     condition2, *allSignals2 = combineSignals(condition, *allSignals)
     condition3 = condition2 and parentobj.logicalOut
-    return LogicBlock(condition3, allSignals2)
+    condIndices = cond2Integers(condition3)
+    return LogicBlock(condition3, condIndices, allSignals2)
 
 def shiftSignal(signal1, N, padVals=None, dir1='right', axis1='0'):
     if dir1 == 'right':
@@ -258,20 +292,20 @@ class Signal(np.ndarray):
     def initData(self, data2, inds):
         # data2 must have the same shape and a compatible dtype as self.data
         if self.initialized == False:
-            try:
-                nd1 = self.ndim
-                nd2 = data2.ndim
-                if self.isConstant:
-                    self[True] = data2
+            nd1 = self.ndim
+            nd2 = np.ndim(data2)
+            if self.isConstant:
+                self[whole()] = data2
+                self.initialized = True
+            elif np.size(data2) == 1:
+                self[inds] = data2
+                self.initialized = True
+            else:
+                if nd1 == nd2:
+                    self[inds] = data2
                     self.initialized = True
                 else:
-                    if nd1 == nd2:
-                        self[inds] = data2
-                        self.initialized = True
-                    else:
-                        pass
-            except (TypeError, ValueError):
-                pass
+                    pass
         else:
             pass
         
@@ -350,20 +384,21 @@ class Signal(np.ndarray):
 
 class LogicalArray():
     """ Allows for if statements that operate on arrays """
-    def __init__(self, logicExpr, allSignals):
+    def __init__(self, logicExpr, logicIndices, allSignals):
         self.logicalOut = logicExpr
+        self.logicalInds = logicIndices
         self.allSignals = allSignals
         
+    def getAll(self):
+        return (self.logicalInds, *self.allSignals)
 
-class LogicBlock(LogicalArray):
+
+class LogicBlock(LogicalArray, ContextDecorator):
     """ Context manager for logic blocks """
-    def __init__(self, *args, **kwds):
-        super().__init__(*args, **kwds)
-    
     def __enter__(self):
         return self
     
-    def __exit__(self):
+    def __exit__(self, *exc):
         return False
 
 
