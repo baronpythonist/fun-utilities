@@ -125,10 +125,14 @@ def createInds(nd, *args):
     else:
         return None
 
-def createSignal(dShape1, dimSpecs1, dtype1, const=False):
+def createSignal(dShape1, dimSpecs1, dtype1, const=False, autoInit=False):
     if (not const and len(dShape1) == len(dimSpecs1)) or const:
         signal1 = Signal(dShape1, dtype=dtype1)
         signal1.setupSignal(dimSpecs1, const=const)
+        if autoInit:
+            signal1.initData(0, createInds(len(dShape1)))
+        else:
+            pass
         return signal1
     else:
         print('Mutable signals must have consistent dimension sizes; all dimensions must be specified.')
@@ -242,9 +246,22 @@ def createBlock(name, nInputs, nOutputs, simFunction1, initData, dataMontitor, f
     (outputNames, outputData) = initData
     block1.initOutputs(outputNames, outputData, dataMontitor)
     return block1
+
+def createDX(uniqueId):
+    x = IgnoreDim(uniqueId + 100)
+    return x
         
 def whole(stop=None):
     return slice(stop)
+
+class IgnoreDim(int):
+    """ Represents a dimension spec that is NOT connected to a simulation input """
+    def __repr__(self):
+        return 'x' + str(self - 100)
+        
+    def __hash__(self):
+        return int(self)
+    
     
 class SigIndices(tuple):
     """ Modified indexing tuple """
@@ -261,9 +278,6 @@ class SigIndices(tuple):
     
 class ImmutableError(Exception):
     """ This error is raised when an attempt is made to modify a constant signal """
-    def __init__(self, *args, **kwds):
-        super().__init__(*args, **kwds)
-        # that's all
 
 
 class Signal(np.ndarray):
@@ -327,6 +341,9 @@ class Signal(np.ndarray):
         else:
             pass
         return updated
+    
+    def __repr__(self):
+        return np.array(self)
     
     def __and__(self, signal2):
         signal3, signal4 = combineSignals(self, signal2)
