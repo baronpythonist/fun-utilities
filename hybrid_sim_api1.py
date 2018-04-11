@@ -175,20 +175,21 @@ def ifcond(condition, allSignals):
 
 def elifcond(ifobj, condition, allSignals):
     condition2, *allSignals2 = combineSignals(condition, *allSignals)
-    condition3 = condition2 and not ifobj.logicalOut
+    condition3 = (condition2 & (not ifobj.logicalOut)) & ifobj.logicalLast
     condIndices = cond2Integers(condition3)
     return LogicBlock(condition3, condIndices, allSignals2)
 
 def elseclause(ifobj, allSignals):
     condition, *allSignals2 = combineSignals(ifobj.logicalOut, *allSignals)
-    condIndices = cond2Integers(condition)
-    return LogicBlock(not condition, condIndices, allSignals2)
+    condition2 = not condition & ifobj.logicalLast
+    condIndices = cond2Integers(condition2)
+    return LogicBlock(condition2, condIndices, allSignals2)
 
 def nestedifcond(parentobj, condition, allSignals):
     condition2, *allSignals2 = combineSignals(condition, *allSignals)
-    condition3 = condition2 and parentobj.logicalOut
+    condition3 = condition2 & parentobj.logicalOut
     condIndices = cond2Integers(condition3)
-    return LogicBlock(condition3, condIndices, allSignals2)
+    return LogicBlock(condition3, condIndices, allSignals2, lastExpr=parentobj.logicalOut)
 
 def shiftSignal(signal1, N, padVals=None, dir1='right', axis1='0'):
     if dir1 == 'right':
@@ -308,7 +309,9 @@ class Signal(np.ndarray):
         if self.initialized == False:
             nd1 = self.ndim
             nd2 = np.ndim(data2)
-            if self.isConstant:
+            if nd1 == 0:
+                self[None] = data2
+            elif self.isConstant:
                 self[whole()] = data2
                 self.initialized = True
             elif np.size(data2) == 1:
@@ -343,7 +346,7 @@ class Signal(np.ndarray):
         return updated
     
     def __repr__(self):
-        return np.array(self)
+        return str(np.array(self))
     
     def __and__(self, signal2):
         signal3, signal4 = combineSignals(self, signal2)
@@ -397,12 +400,16 @@ class Signal(np.ndarray):
         outSignal = createSignal(signal3.shape, signal3.dimSpecs, bool)
         outSignal.initData(np.greater_equal(signal3, signal4), createInds(signal3.ndim))
         return outSignal
-        
+    
 
 class LogicalArray():
     """ Allows for if statements that operate on arrays """
-    def __init__(self, logicExpr, logicIndices, allSignals):
+    def __init__(self, logicExpr, logicIndices, allSignals, lastExpr=None):
         self.logicalOut = logicExpr
+        if lastExpr is not None:
+            self.logicalLast = lastExpr
+        else:
+            self.logicalLast = logicExpr | True
         self.logicalInds = logicIndices
         self.allSignals = allSignals
         
