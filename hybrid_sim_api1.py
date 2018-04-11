@@ -175,13 +175,13 @@ def ifcond(condition, allSignals):
 
 def elifcond(ifobj, condition, allSignals):
     condition2, *allSignals2 = combineSignals(condition, *allSignals)
-    condition3 = (condition2 & (not ifobj.logicalOut)) & ifobj.logicalLast
+    condition3 = (condition2 & ~ifobj.logicalOut) & ifobj.logicalLast
     condIndices = cond2Integers(condition3)
     return LogicBlock(condition3, condIndices, allSignals2)
 
 def elseclause(ifobj, allSignals):
     condition, *allSignals2 = combineSignals(ifobj.logicalOut, *allSignals)
-    condition2 = not condition & ifobj.logicalLast
+    condition2 = ~condition & ifobj.logicalLast
     condIndices = cond2Integers(condition2)
     return LogicBlock(condition2, condIndices, allSignals2)
 
