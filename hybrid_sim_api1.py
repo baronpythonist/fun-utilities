@@ -455,10 +455,8 @@ class DataMonitor():
             updated = False
             if name in self.data and allNotInvalid(data2):
                 signal1 = self.data[name]
-                try:
-                    updated = signal1.updateData(data2)
-                except (TypeError, ValueError):
-                    pass
+                inds1 = createInds(signal1.ndim)
+                updated = signal1.updateData(data2, inds1)
             else:
                 pass
             if updated:
@@ -603,7 +601,7 @@ class SimModel():
         self.allBlocks = {}
         self.blockNames = []
     
-    def buildModel(self, blockDeclarations, modelPortlist, monitorNames):
+    def buildModel(self, blockDeclarations, blockInitData, modelPortlist, monitorNames):
         'This method is automatically called by one or more module-level functions.'
         allMonitors = []
         for name in monitorNames:
@@ -611,12 +609,12 @@ class SimModel():
             allMonitors.append(monitor1)
         self.monitors = dict(zip(monitorNames, allMonitors))
         # create and initialize blocks
-        for blockDecl in blockDeclarations:
-            if len(blockDecl) > 6:
-                (blockName, nInputs, nOutputs, simFunction1, initData, monitorName, functKwds) = blockDecl[:5]
+        for blockDecl, initData in zip(blockDeclarations, blockInitData):
+            if len(blockDecl) > 5:
+                (blockName, nInputs, nOutputs, simFunction1, monitorName, functKwds) = blockDecl[:5]
                 blockName2 = '.'.join([monitorName, blockName])
-            elif len(blockDecl) == 6:
-                (blockName, nInputs, nOutputs, simFunction1, initData, monitorName) = blockDecl
+            elif len(blockDecl) == 5:
+                (blockName, nInputs, nOutputs, simFunction1, monitorName) = blockDecl
                 blockName2 = '.'.join([monitorName, blockName])
                 functKwds = {}
             else:
