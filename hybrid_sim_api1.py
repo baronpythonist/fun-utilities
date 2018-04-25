@@ -10,6 +10,8 @@ Created on Sat Nov 25 09:01:53 2017
 # hybrid_sim_api1.py
 
 import numpy as np
+import scipy.interpolate as snt
+import scipy.signal as sig
 from contextlib import ContextDecorator
 #from Queue import Queue
 #from threading import Thread, Event
@@ -36,6 +38,7 @@ def combineSignals(signal1, *remSignals):
     allTypes.append(signal1.dtype)
     d1 = dict(zip(signal1.dimSpecs, signal1.shape))
     allSignals = [signal1, *remSignals]
+    oddSpecs = [createDX(n) for n in range(10, 20)]
     for signal2 in remSignals:
         if type(signal2) is Signal:
             dSpecs2 = signal2.dimSpecs
@@ -43,16 +46,23 @@ def combineSignals(signal1, *remSignals):
             dShape2 = signal2.shape
             d1.update(dict(zip(dSpecs2, dShape2)))
             dtype2 = signal2.dtype
-        elif np.ndim(signal2) == 0:
-            dSpecs2 = ()
-            nd2 = 0
-            dShape2 = ()
-            if type(signal2) in (float, bool, int):
-                dtype2 = type(signal2)
-            else:
-                raise TypeError
         else:
-            raise TypeError
+            try:
+                dtype2 = signal2.dtype
+                nd2 = np.ndim(signal2)
+                dSpecs2 = tuple(oddSpecs[:nd2])
+                dShape2 = np.shape(signal2)
+            except AttributeError:
+                if type(signal2) in (float, bool, int):
+                    dtype2 = type(signal2)
+                else:
+                    raise TypeError
+                if np.ndim(signal2) == 0:
+                    dSpecs2 = ()
+                    nd2 = 0
+                    dShape2 = ()
+                else:
+                    raise TypeError
         allSpecs.append(dSpecs2)
         allDims.append(nd2)
         allShapes.append(dShape2)
@@ -83,26 +93,27 @@ def combineSignals(signal1, *remSignals):
         lastVals = (dSpecs3b, nd3, dtype2)
     (dSpecs3b, nd3, dtype2) = lastVals
     dims = list(range(nd3))
-    allReps = [[] for s in allSpecs]
+    allReps = [[None for d in dims] for s in allSpecs]
     dShape3a = []
     for k1, k2 in zip(dims, dSpecs3b):
         for k3, (dSpecs1, signal1) in enumerate(zip(allSpecs, allSignals)):
             reps1 = allReps[k3]
             if k2 in dSpecs1:
-                reps1.append(whole())
+                reps1[k1] = whole()
             else:
-                reps1.append(None)
+                reps1[k1] = None
             allReps[k3] = reps1
         dShape3a.append(d1[k2])
     dShape3b = tuple(dShape3a)
     outSignals = []
     for reps1, dtype1, signal1 in zip(allReps, allTypes, allSignals):
-        inds1 = createInds(nd3, dims, reps1)
-        if signal1.isConstant:
-            signalOut = createSignal(dShape3b, (), dtype1, const=True)
-        else:
-            signalOut = createSignal(dShape3b, dSpecs3b, dtype1)
-        signalOut.initData(signal1, inds1)
+        inds1 = createInds(nd3)
+        inds2 = createInds(nd3, dims, reps1)
+        signalOut = createSignal(dShape3b, dSpecs3b, dtype1)
+        try:
+            signalOut.initData(signal1[inds2], inds1)
+        except TypeError:
+            signalOut.initData(signal1, inds1)
         outSignals.append(signalOut)
     return tuple(outSignals)
 
@@ -137,6 +148,16 @@ def createSignal(dShape1, dimSpecs1, dtype1, const=False, autoInit=False):
     else:
         print('Mutable signals must have consistent dimension sizes; all dimensions must be specified.')
         raise TypeError
+        
+def copySignal(signalIn, includeValues=True):
+    signalOut = createSignal(signalIn.shape, signalIn.dimSpecs, 
+                             signalIn.dtype, const=signalIn.isConstant)
+    inds1 = createInds(signalIn.ndim)
+    if includeValues:
+        signalOut.initData(signalIn, inds1)
+    else:
+        signalOut.initData(0, inds1)
+    return signalOut
 
 def createConst(cdata1, dtype1=float, dShape1=()):
     cdata2 = np.array(cdata1)
@@ -242,6 +263,86 @@ def shiftSignal(signal1, N, padVals=None, dir1='right', axis1='0'):
         signal2.updateData(data2, whole())
     return signal2
 
+def sampleHold(data1, sampleLocations, axis1=0):
+    'Samples "data1" at each integer index in "sampleLocations", holding the last sampled value'
+    lastDataN = np.size(data1, axis=axis1) - 1
+    lastSampleN = int(np.max(sampleLocations))
+    dims2 = list(range(data1.ndim))
+    del dims2[axis1]
+    if lastSampleN < lastDataN:
+        x1 = np.r_[sampleLocations, lastDataN]
+        if len(dims2) > 0:
+            lastSamples = lastSampleN*np.ones(tuple(dims2))
+        else:
+            lastSamples = lastSampleN
+        sampleLocations2 = np.r_[str(axis1), sampleLocations, lastSamples]
+        inds1 = createInds(data1.ndim, [axis1], [sampleLocations2])
+    else:
+        x1 = sampleLocations
+        inds1 = createInds(data1.ndim, [axis1], [sampleLocations])
+    y1 = data1[inds1]
+    sN = 5000
+    x2 = np.indices(data1.shape)[axis1]
+    reps2 = [0 for d in dims2]
+    inds2 = createInds(x2.ndim, dims2, reps2)
+    if np.size(x1, axis=axis1) > sN:
+        nSects = np.size(x1, axis=axis1)//sN + 1
+        last_n = 0
+        y2 = np.zeros(data1.shape)
+        for n in range(nSects):
+            n1 = last_n
+            n2 = sN*(n+1) + 1
+            k1 = x1[n1]
+            k2 = x1[n2]
+            zf = snt.interp1d(x1[n1:n2], y1[n1:n2], kind='zero', axis=axis1)
+            inds1b = createInds(x2.ndim, [axis1], [slice(k1, k2)])
+            inds2b = list(inds2)
+            inds2b[axis1] = inds1[inds1b]
+            y2[inds1b] = zf(x2[tuple(inds2b)])
+    else:
+        zf = snt.interp1d(x1, y1, kind='zero', axis=axis1)
+        y2 = zf(x2[inds2])
+    return y2
+
+def filterSegments(b, a, inputSignal, outputSignal, outputInds=None, enabledRegions=True):
+    segments1 = createSignal(b.shape[:1], b.dimSpecs[:1], bool, autoInit=True)
+    segments2 = createSignal(a.shape[:1], a.dimSpecs[:1], bool, autoInit=True)
+    inds1 = createInds(1)
+    segments1.updateData(np.r_[1, np.sum(np.diff(b, axis=0), axis=1)], inds1)
+    segments2.updateData(np.r_[1, np.sum(np.diff(a, axis=0), axis=1)], inds1)
+    segInds1 = createSignal(segments1.shape, segments1.dimSpecs, np.uint32)
+    segInds1.initData(np.indices(segments1.shape)[0], inds1)
+    segInds2 = segInds1[(segments1 | segments2) & enabledRegions]
+    segInds3 = segInds1[enabledRegions]
+    interSignal = copySignal(inputSignal, includeValues=False)
+    for si in segInds2:
+        num1 = b[si,:]
+        den1 = a[si,:]
+        if si > 0:
+            inds2 = createInds(inputSignal.ndim, [0], [si-1])
+            initData = interSignal[inds2]
+        else:
+            inds2 = createInds(inputSignal.ndim, [0], [0])
+            initData = inputSignal[inds2]
+        if np.size(initData) == 1:
+            initData2 = [initData]
+        else:
+            initData2 = initData
+        inds3 = createInds(inputSignal.ndim, [0], [slice(si, None)])
+        if np.size(inputSignal[inds3], axis=0) > 20:
+            inds4 = createInds(inputSignal.ndim, [0], [segInds1 >= si])
+            interSignal.updateData(sig.lfilter(num1, den1, inputSignal[inds3], 
+                                               axis=0, zi=initData2), inds4)
+        else:
+            inds4 = createInds(inputSignal.ndim, [0], [segInds1 >= si])
+            interSignal.updateData(initData2, inds4)
+    if outputInds is not None:
+        inds1b = outputInds
+    else:
+        inds1b = inds1
+    outputSignal.updateData(sampleHold(interSignal, segInds3), inds1b)
+#    return outputSignal
+
 def createBlock(name, nInputs, nOutputs, simFunction1, initData, dataMontitor, functKwds=None):
     block1 = SimBlock(name, nInputs, nOutputs, simFunction1, functKwds=functKwds)
     (outputNames, outputData) = initData
@@ -337,7 +438,10 @@ class Signal(np.ndarray):
         if self.initialized:
 #            nd1 = self.ndim
             if not self.isConstant:
-                self[inds] = data2
+                if np.size(inds) > 0 and np.size(data2) > 0:
+                    self[inds] = data2
+                else:
+                    pass
                 updated = True
             else:
                 raise ImmutableError
@@ -400,6 +504,12 @@ class Signal(np.ndarray):
         outSignal = createSignal(signal3.shape, signal3.dimSpecs, bool)
         outSignal.initData(np.greater_equal(signal3, signal4), createInds(signal3.ndim))
         return outSignal
+    
+    def __getitem__(self, key):
+        if np.size(key) > 0:
+            return self[key]
+        else:
+            return []
     
 
 class LogicalArray():
