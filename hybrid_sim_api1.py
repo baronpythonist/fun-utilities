@@ -265,46 +265,65 @@ def shiftSignal(signal1, N, padVals=None, dir1='right', axis1='0'):
 
 def sampleHold(data1, sampleLocations, axis1=0):
     'Samples "data1" at each integer index in "sampleLocations", holding the last sampled value'
-    lastDataN = np.size(data1, axis=axis1) - 1
-    lastSampleN = int(np.max(sampleLocations))
-    dims2 = list(range(data1.ndim))
-    del dims2[axis1]
-    if lastSampleN < lastDataN:
-        x1 = np.r_[sampleLocations, lastDataN]
-        if len(dims2) > 0:
-            lastSamples = lastSampleN*np.ones(tuple(dims2))
+    data2 = np.squeeze(data1)
+    sampleLocations1b = np.squeeze(sampleLocations)
+    lastDataN = np.size(data2, axis=axis1) - 1
+    if np.size(sampleLocations1b) > 1:
+        lastSampleN = np.max(sampleLocations1b, axis=axis1) - 1
+        dims2 = list(range(data2.ndim))
+        del dims2[axis1]
+        dShape2 = list(data2.shape)
+        dShape2[axis1] = 1
+        if int(np.min(lastSampleN)) < lastDataN:
+            if len(dims2) > 0:
+                lastSamples = lastDataN*np.ones(tuple(dShape2), dtype=int)
+            else:
+                lastSamples = [lastDataN]
+            sampleLocations2 = np.r_[str(axis1), sampleLocations1b, lastSamples]
+            x1 = np.squeeze(sampleLocations2)
+            inds1 = createInds(data2.ndim, [axis1], [x1])
         else:
-            lastSamples = lastSampleN
-        sampleLocations2 = np.r_[str(axis1), sampleLocations, lastSamples]
-        inds1 = createInds(data1.ndim, [axis1], [sampleLocations2])
+            x1 = sampleLocations1b
+            inds1 = createInds(data2.ndim, [axis1], [x1])
+        y1 = np.squeeze(data2[inds1])
+        sN = 4000
+        x2 = np.indices(data2.shape)[axis1]
+        if np.size(x1, axis=axis1) > sN:
+            nSects = np.size(x1, axis=axis1)//sN + 1
+            last_n = 0
+            y2 = np.zeros(data2.shape)
+            for n in range(nSects):
+                n1 = last_n
+                n2 = sN*(n+1) + 1
+                if n2 >= np.size(x1, axis=axis1):
+                    sliceN = slice(n1, None)
+                    k1 = x1[n1]
+                    k2 = x1[-1]
+                    sliceK = slice(k1, k2)
+                else:
+                    sliceN = slice(n1, n2)
+                    k1 = x1[n1]
+                    k2 = x1[n2]
+                    sliceK = slice(k1, k2)
+                zf = snt.interp1d(x1[sliceN], y1[sliceN], kind='zero', axis=axis1)
+                inds1b = createInds(x2.ndim, [axis1], [sliceK])
+                y2[inds1b] = zf(x2[inds1b])
+                last_n = n2
+        else:
+#            reps2 = [0 for d in dims2]
+            inds2 = createInds(x2.ndim)
+            zf = snt.interp1d(x1, y1, kind='zero', axis=axis1)
+            try:
+                y2 = zf(x2[inds2])
+            except ValueError:
+                print('Maximum input index: {n}'.format(n=np.max(x2[inds2])))
+                print('\nMaximum index supported: {n}'.format(n=np.max(x1)))
+                raise
+        return y2
     else:
-        x1 = sampleLocations
-        inds1 = createInds(data1.ndim, [axis1], [sampleLocations])
-    y1 = data1[inds1]
-    sN = 5000
-    x2 = np.indices(data1.shape)[axis1]
-    reps2 = [0 for d in dims2]
-    inds2 = createInds(x2.ndim, dims2, reps2)
-    if np.size(x1, axis=axis1) > sN:
-        nSects = np.size(x1, axis=axis1)//sN + 1
-        last_n = 0
-        y2 = np.zeros(data1.shape)
-        for n in range(nSects):
-            n1 = last_n
-            n2 = sN*(n+1) + 1
-            k1 = x1[n1]
-            k2 = x1[n2]
-            zf = snt.interp1d(x1[n1:n2], y1[n1:n2], kind='zero', axis=axis1)
-            inds1b = createInds(x2.ndim, [axis1], [slice(k1, k2)])
-            inds2b = list(inds2)
-            inds2b[axis1] = inds1[inds1b]
-            y2[inds1b] = zf(x2[tuple(inds2b)])
-    else:
-        zf = snt.interp1d(x1, y1, kind='zero', axis=axis1)
-        y2 = zf(x2[inds2])
-    return y2
+        return data2
 
-def filterSegments(b, a, inputSignal, outputSignal, outputInds=None, enabledRegions=True):
+def filterSegments(b, a, inputSignal, outputSignal, inputInds=None, outputInds=None, enabledRegions=True):
     segments1 = createSignal(b.shape[:1], b.dimSpecs[:1], bool, autoInit=True)
     segments2 = createSignal(a.shape[:1], a.dimSpecs[:1], bool, autoInit=True)
     inds1 = createInds(1)
