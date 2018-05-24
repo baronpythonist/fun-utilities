@@ -362,10 +362,10 @@ def filterSegments(b, a, inputSignal, outputSignal, inputInds=None, outputInds=N
     outputSignal.updateData(sampleHold(interSignal, segInds3), inds1b)
 #    return outputSignal
 
-def createBlock(name, nInputs, nOutputs, simFunction1, initData, dataMontitor, functKwds=None):
+def createBlock(name, nInputs, nOutputs, simFunction1, initData, dataMonitor, functKwds=None):
     block1 = SimBlock(name, nInputs, nOutputs, simFunction1, functKwds=functKwds)
     (outputNames, outputData) = initData
-    block1.initOutputs(outputNames, outputData, dataMontitor)
+    block1.initOutputs(outputNames, outputData, dataMonitor)
     return block1
 
 def createDX(uniqueId):
