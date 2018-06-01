@@ -19,8 +19,9 @@ from contextlib import ContextDecorator
 #import pyqtgraph as pg
 
 def allNotInvalid(data):
-    if not any(np.isnan(data)):
-        if all(np.logical_and(data < np.inf, data > -np.inf)):
+    data2 = np.array(data.flatten())
+    if not any(np.isnan(data2)):
+        if np.max(data2) < np.inf and np.min(data2) > -np.inf:
             return True
         else:
             return False
