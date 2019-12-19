@@ -4,6 +4,8 @@
 
 import asyncio
 import random
+import tracemalloc
+
 
 async def red_light(duration):
     await asyncio.sleep(duration)
@@ -202,15 +204,23 @@ async def intersection_version2():
         trigger_handles2('Brown St.', semaphores, requests, timeoutQ, advance1, advance2, quit_app), 
         street_parallel1('Smith St.', semaphores, requests, delayQ, timeoutQ, advance1, quit_app, start=start_time), 
         street_parallel2('Brown St.', semaphores, requests, delayQ, timeoutQ, advance2, quit_app, start=start_time, triggered=True), 
-        simulation_timer(40, quit_app), 
+        simulation_timer(60, quit_app), 
     )
+    print('\nSimulation Finished!')
     return True
+
+def run_program():
+    try:
+        asyncio.run(intersection_version2())
+    except RuntimeError:
+        loop1 = asyncio.get_running_loop()
+        _ = asyncio.run_coroutine_threadsafe(intersection_version2(), loop1)
 
 
 if __name__ == "__main__":
-    asyncio.run(intersection_version2())
-
-
-
-
-
+    tracemalloc.start()
+    run_program()
+    tracemalloc.stop()
+    
+    
+    
